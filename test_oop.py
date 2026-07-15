@@ -1,81 +1,55 @@
 import random
+import pytest
+from oop import Entity, Knight, Dragon
 
-class Entity:
-    def __init__(self, name, health, min_dmg, max_dmg):
-        self.name = name
-        self.max_hp = health
-        self.hp = health
-        self.min_dmg = min_dmg
-        self.max_dmg = max_dmg
-        
-    def is_alive(self):
-        return self.hp > 0
-        
-    def take_damage(self, hit):
-        self.hp = max(0, self.hp - hit)
 
-    def roll_attack(self):
-        return random.randint(self.min_dmg, self.max_dmg)
+def test_entity_takes_damage_and_floors_at_zero():
+    goblin = Entity("Goblin", health=30, min_dmg=1, max_dmg=1)
+    goblin.take_damage(50)
+    assert goblin.hp == 0
+    assert not goblin.is_alive()
 
-class Knight(Entity):
-    def __init__(self, name, health, min_dmg, max_dmg, crit, flasks):
-        super().__init__(name, health, min_dmg, max_dmg)
-        self.crit = crit
-        self.flasks = flasks
-        
-    def roll_attack(self):
-        base_hit = super().roll_attack()
-        if random.random() < self.crit:
-            print(f"** {self.name} lands a critical strike! **")
-            return int(base_hit * 1.5)
-        return base_hit
-        
-    def drink_flask(self):
-        if self.flasks > 0:
-            self.hp = min(self.max_hp, self.hp + 50)
-            self.flasks -= 1
-            print(f"{self.name} chugs a flask. 50 HP restored. ({self.flasks} left)")
-            return True
-        return False
+def test_entity_roll_attack_stays_in_range():
+    goblin = Entity("Goblin", health=30, min_dmg=5, max_dmg=8)
+    for _ in range(200):
+        assert 5 <= goblin.roll_attack() <= 8
 
-class Dragon(Entity):
-    def __init__(self, name, health, min_dmg, max_dmg, scales):
-        super().__init__(name, health, min_dmg, max_dmg)
-        self.scales = scales  # flat damage reduction
-        
-    def take_damage(self, hit):
-        mitigated = max(1, hit - self.scales)
-        super().take_damage(mitigated)
-        return mitigated
 
-def run_encounter():
-    arthur = Knight("Arthur", health=120, min_dmg=18, max_dmg=28, crit=0.25, flasks=2)
+def test_knight_crit_multiplies_damage(monkeypatch):
+    knight = Knight("Arthur", health=120, min_dmg=10, max_dmg=10, crit=1.0, flasks=2)
+    monkeypatch.setattr(random, "randint", lambda a, b: 10)
+    monkeypatch.setattr(random, "random", lambda: 0.0)  # forces the crit branch
+    assert knight.roll_attack() == 15
+
+
+def test_knight_no_crit_returns_base_hit(monkeypatch):
+    knight = Knight("Arthur", health=120, min_dmg=10, max_dmg=10, crit=0.0, flasks=2)
+    monkeypatch.setattr(random, "randint", lambda a, b: 10)
+    assert knight.roll_attack() == 10
+
+def test_flask_heals_but_clamps_at_max_hp():
+    knight = Knight("Arthur", health=120, min_dmg=10, max_dmg=20, crit=0.25, flasks=1)
+    knight.hp = 100
+    knight.drink_flask()
+    assert knight.hp == 120  # 100 + 50 would overshoot max_hp
+
+
+def test_flask_decrements_and_runs_dry():
+    knight = Knight("Arthur", health=120, min_dmg=10, max_dmg=20, crit=0.25, flasks=1)
+    knight.hp = 50
+    assert knight.drink_flask() is True
+    assert knight.flasks == 0
+    assert knight.drink_flask() is False
+
+
+def test_dragon_scales_never_reduce_damage_below_one():
     smaug = Dragon("Smaug", health=350, min_dmg=15, max_dmg=25, scales=6)
-    
-    turn = 1
-    while arthur.is_alive() and smaug.is_alive():
-        print(f"\n--- Turn {turn} ---")
-        
-        # heal if low, otherwise attack
-        if arthur.hp <= 45 and arthur.flasks > 0:
-            arthur.drink_flask()
-        else:
-            swing = arthur.roll_attack()
-            actual_dmg = smaug.take_damage(swing)
-            print(f"{arthur.name} hits {smaug.name} for {actual_dmg}. ({smaug.name}: {smaug.hp})")
-            
-        if not smaug.is_alive():
-            print(f"\n{smaug.name} is defeated.")
-            break
-            
-        boss_hit = smaug.roll_attack()
-        arthur.take_damage(boss_hit)
-        print(f"{smaug.name} tail swipes for {boss_hit}. ({arthur.name}: {arthur.hp})")
-        
-        if not arthur.is_alive():
-            print(f"\n{arthur.name} died.")
-            
-        turn += 1
+    mitigated = smaug.take_damage(3) 
+    assert mitigated == 1
+    assert smaug.hp == 349
 
-if __name__ == "__main__":
-    run_encounter()
+def test_dragon_take_damage_applies_scales_normally():
+    smaug = Dragon("Smaug", health=350, min_dmg=15, max_dmg=25, scales=6)
+    mitigated = smaug.take_damage(20)
+    assert mitigated == 14
+    assert smaug.hp == 336
