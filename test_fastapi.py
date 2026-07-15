@@ -1,87 +1,36 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from oop import Knight, Dragon
+from fastapi.testclient import TestClient
+from api import app, active_battles
 
-app = FastAPI()
+client = TestClient(app)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def test_start_encounter_creates_battle_state():
+    resp = client.post("/start/session1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["hero_hp"] == 120
+    assert body["boss_hp"] == 350
+    assert body["game_over"] is False
 
-active_battles = {}
 
-class BattleStatus(BaseModel):
-    session_id: str
-    hero_hp: int
-    boss_hp: int
-    flasks: int
-    log: list[str]
-    game_over: bool
+def test_status_404_for_unknown_session():
+    resp = client.get("/status/ghost")
+    assert resp.status_code == 404
 
-@app.post("/start/{session_id}")
-def start_encounter(session_id: str):
-    active_battles[session_id] = {
-        "hero": Knight("Arthur", 120, 18, 28, 0.25, 2),
-        "boss": Dragon("Smaug", 350, 15, 25, 6),
-        "log": ["A wild Smaug appears."]
-    }
-    return get_status(session_id)
 
-@app.get("/status/{session_id}", response_model=BattleStatus)
-def get_status(session_id: str):
-    if session_id not in active_battles:
-        raise HTTPException(status_code=404, detail="Battle not found")
-        
-    battle = active_battles[session_id]
-    hero = battle["hero"]
-    boss = battle["boss"]
-    
-    return {
-        "session_id": session_id,
-        "hero_hp": hero.hp,
-        "boss_hp": boss.hp,
-        "flasks": hero.flasks,
-        "log": battle["log"][-5:], # trim to last 5 events so UI doesn't lag
-        "game_over": not hero.is_alive() or not boss.is_alive()
-    }
+def test_attack_action_damages_boss():
+    client.post("/start/session2")
+    resp = client.post("/action/session2", params={"action": "attack"})
+    assert resp.json()["boss_hp"] < 350
 
-@app.post("/action/{session_id}")
-def execute_turn(session_id: str, action: str):
-    if session_id not in active_battles:
-        raise HTTPException(status_code=404)
-        
-    battle = active_battles[session_id]
-    hero = battle["hero"]
-    boss = battle["boss"]
-    
-    if not hero.is_alive() or not boss.is_alive():
-        return get_status(session_id)
-        
-    if action == "attack":
-        dmg = hero.roll_attack()
-        mitigated = boss.take_damage(dmg)
-        battle["log"].append(f"Arthur hits for {mitigated}.")
-    elif action == "flask":
-        if hero.drink_flask():
-            battle["log"].append("Arthur drinks a flask. HP +50.")
-        else:
-            battle["log"].append("Out of flasks!")
-            return get_status(session_id) # abort boss turn if they hit the wrong button
-            
-    if not boss.is_alive():
-        battle["log"].append("Smaug is dead. You win!")
-        return get_status(session_id)
-        
-    boss_dmg = boss.roll_attack()
-    hero.take_damage(boss_dmg)
-    battle["log"].append(f"Smaug retaliates for {boss_dmg}.")
-    
-    if not hero.is_alive():
-        battle["log"].append("Arthur died. Game Over.")
-        
-    return get_status(session_id)
+def test_flask_action_out_of_flasks_logs_and_skips_boss_turn():
+    client.post("/start/session3")
+    active_battles["session3"]["hero"].flasks = 0
+    resp = client.post("/action/session3", params={"action": "flask"})
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["log"][-1] == "Out of flasks!"
+    assert body["hero_hp"] == 120 
+
+def test_action_on_missing_session_returns_404():
+    resp = client.post("/action/nowhere", params={"action": "attack"})
+    assert resp.status_code == 404
