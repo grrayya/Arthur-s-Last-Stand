@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arthur's Last Stand</title>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --panel-bg: #313244;
+            --text-main: #cdd6f4;
+            --knight-hp: #a6e3a1;
+            --dragon-hp: #f38ba8;
+            --flask-color: #fab387;
+        }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+
+        .arena {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 30px;
+        }
+
+        .entity-card {
+            background: var(--panel-bg);
+            padding: 20px;
+            border-radius: 8px;
+            width: 40%;
+            border: 2px solid #45475a;
+        }
+
+        .hp-bar-bg {
+            background: #181825;
+            height: 25px;
+            border-radius: 4px;
+            margin-top: 10px;
+            overflow: hidden;
+            border: 1px solid #45475a;
+        }
+
+        .hp-fill {
+            height: 100%;
+            transition: width 0.3s ease-out;
+        }
+
+        #arthur-hp-fill { background: var(--knight-hp); }
+        #smaug-hp-fill { background: var(--dragon-hp); }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background: #89b4fa;
+            color: #11111b;
+            transition: opacity 0.2s;
+        }
+
+        button:hover { opacity: 0.8; }
+        button:disabled {
+            background: #585b70;
+            cursor: not-allowed;
+        }
+
+        .btn-flask { background: var(--flask-color); }
+
+        .combat-log {
+            background: #11111b;
+            padding: 15px;
+            border-radius: 8px;
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #313244;
+        }
+
+        .combat-log p { margin: 5px 0; }
+    </style>
+</head>
+<body>
+
+    <h1 style="text-align: center;">Arthur vs. Smaug</h1>
+
+    <div style="text-align: center; margin-bottom: 20px;">
+        <button id="btn-start" onclick="initEncounter()">Start Encounter</button>
+    </div>
+
+    <div class="arena" id="arena" style="display: none;">
+        <div class="entity-card">
+            <h2>Arthur <span id="flask-count" style="font-size: 14px; color: var(--flask-color);">(2 Flasks)</span></h2>
+            <div class="hp-bar-bg">
+                <div id="arthur-hp-fill" class="hp-fill" style="width: 100%;"></div>
+            </div>
+            <p id="arthur-hp-text">120 / 120 HP</p>
+        </div>
+
+        <div class="entity-card">
+            <h2>Smaug</h2>
+            <div class="hp-bar-bg">
+                <div id="smaug-hp-fill" class="hp-fill" style="width: 100%;"></div>
+            </div>
+            <p id="smaug-hp-text">350 / 350 HP</p>
+        </div>
+    </div>
+
+    <div class="controls" id="controls" style="display: none;">
+        <button id="btn-attack" onclick="takeAction('attack')">Attack</button>
+        <button id="btn-flask" class="btn-flask" onclick="takeAction('flask')">Drink Flask</button>
+    </div>
+
+    <div class="combat-log" id="combat-log">
+        <p style="color: #7f849c;">Waiting for encounter to start...</p>
+    </div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        let currentSession = null;
+
+        async function initEncounter() {
+            currentSession = "session_" + Math.floor(Math.random() * 100000);
+            
+            try {
+                const res = await fetch(`${API_URL}/start/${currentSession}`, { method: "POST" });
+                if (!res.ok) throw new Error("Failed to start server session");
+                
+                const battleState = await res.json();
+                
+                document.getElementById('btn-start').style.display = 'none';
+                document.getElementById('arena').style.display = 'flex';
+                document.getElementById('controls').style.display = 'flex';
+                
+                updateUI(battleState);
+            } catch (err) {
+                console.error(err);
+                document.getElementById('combat-log').innerHTML = `<p style="color: #f38ba8;">Could not connect to game server.</p>`;
+            }
+        }
+
+        async function takeAction(actionType) {
+            if (!currentSession) return;
+            
+            document.getElementById('btn-attack').disabled = true;
+            document.getElementById('btn-flask').disabled = true;
+
+            try {
+                const res = await fetch(`${API_URL}/action/${currentSession}?action=${actionType}`, { method: "POST" });
+                
+                if (res.status === 404) {
+                    alert("Session expired. Please refresh.");
+                    return;
+                }
+                
+                const battleState = await res.json();
+                updateUI(battleState);
+            } catch (err) {
+                console.error("Action dropped:", err);
+            } finally {
+                document.getElementById('btn-attack').disabled = false;
+                document.getElementById('btn-flask').disabled = false;
+            }
+        }
+
+        function updateUI(state) {
+            const arthurPct = Math.max(0, (state.hero_hp / 120) * 100);
+            const smaugPct = Math.max(0, (state.boss_hp / 350) * 100);
+
+            document.getElementById('arthur-hp-fill').style.width = `${arthurPct}%`;
+            document.getElementById('arthur-hp-text').innerText = `${state.hero_hp} / 120 HP`;
+            
+            document.getElementById('smaug-hp-fill').style.width = `${smaugPct}%`;
+            document.getElementById('smaug-hp-text').innerText = `${state.boss_hp} / 350 HP`;
+            
+            document.getElementById('flask-count').innerText = `(${state.flasks} Flasks)`;
+
+            const logBox = document.getElementById('combat-log');
+            logBox.innerHTML = state.log.map(msg => `<p>${msg}</p>`).join('');
+            logBox.scrollTop = logBox.scrollHeight;
+
+            if (state.game_over) {
+                document.getElementById('controls').style.display = 'none';
+                document.getElementById('btn-start').innerText = "Play Again";
+                document.getElementById('btn-start').style.display = 'inline-block';
+            }
+        }
+    </script>
+</body>
+</html>
